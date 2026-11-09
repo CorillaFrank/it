@@ -1,13 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
+using HamulProto.Models;
 using NAudio.Wave;
 
 // --- ALIAS PARA EVITAR CONFLICTOS CON WINDOWS FORMS ---
@@ -32,27 +36,50 @@ using Cursors = System.Windows.Input.Cursors;
 
 namespace HamulProto;
 
-public class SoundItem
+public class SoundItem : INotifyPropertyChanged
 {
+    private string _playIcon = "▶";
+
     public string Name { get; set; } = "";
     public string Category { get; set; } = "";
     public string Shortcut { get; set; } = "";
     public string Date { get; set; } = "";
     public string FilePath { get; set; } = "";
-    public string PlayIcon { get; set; } = "▶";
+
+    /// <summary>▶ cuando está detenido, ⏸ mientras se reproduce.</summary>
+    public string PlayIcon
+    {
+        get => _playIcon;
+        set
+        {
+            if (_playIcon == value) return;
+            _playIcon = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PlayIcon)));
+        }
+    }
+
+    /// <summary>Id del sonido en el backend; 0 si solo existe localmente.</summary>
+    public long BackendId { get; set; }
 
     public string CategoryLabel => string.IsNullOrEmpty(Category) ? "—" : Category;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 }
 
 public partial class DashboardWindow : Window
 {
+    /// <summary>El usuario pidió abrir la ventana de login desde el panel.</summary>
+    public event EventHandler? LoginRequested;
+
     // ---------- Geometría de la rueda ----------
     private const int Slots = 8;
     private const double Center = 250;
     private const double OuterR = 225;
     private const double InnerR = 72;
 
-    private readonly string soundsDir;
+    // Cada usuario tiene su propia carpeta de sonidos y sus propios slots.
+    // Una cuenta nueva empieza con la lista vacía.
+    private string SoundsDir => Config.Current.UserSoundsDir;
     private readonly string[] _shortcuts = {
         "Ctrl+Shift+F1", "Ctrl+Shift+F2", "Ctrl+Shift+F3", "Ctrl+Shift+F4",
         "Ctrl+Shift+F5", "Ctrl+Shift+F6", "Ctrl+Shift+F7", "Ctrl+Shift+F8"
@@ -60,11 +87,15 @@ public partial class DashboardWindow : Window
 
     // Qué archivo está asignado a cada sector (se guarda en slots.json)
     private readonly string?[] _slotFiles = new string?[Slots];
-    private string SlotsPath => Path.Combine(Config.Dir, "slots.json");
+    private string SlotsPath => Path.Combine(Config.Current.UserDir, "slots.json");
 
     // Categoría de cada sonido por nombre de archivo (se guarda en categories.json)
     private Dictionary<string, string> _categoryMap = new();
-    private string CategoriesPath => Path.Combine(Config.Dir, "categories.json");
+    private string CategoriesPath => Path.Combine(Config.Current.UserDir, "categories.json");
+
+    // Mapa archivo local -> id del sonido en el backend (se guarda en sounds.json)
+    private Dictionary<string, long> _soundIds = new(StringComparer.OrdinalIgnoreCase);
+    private string SoundsMapPath => Path.Combine(Config.Current.UserDir, "sounds.json");
     private static readonly string[] Categories = { "Saludo", "GG", "Burla", "Épico", "Chill", "Ayuda", "Otros" };
     private string _activeCategory = "Todos";
 
@@ -83,6 +114,7 @@ public partial class DashboardWindow : Window
     public DashboardWindow()
     {
         InitializeComponent();
+        AccountPage.LogoutRequested += (_, _) => Logout();
         SettingsPage.ThemeChanged += (_, _) => ApplySavedTheme();
         SettingsPage.SoundVolumeChanged += (_, _) =>
         {
@@ -95,11 +127,11 @@ public partial class DashboardWindow : Window
         MaxWidth = SystemParameters.WorkArea.Width;
         MaxHeight = SystemParameters.WorkArea.Height;
 
-        soundsDir = Path.Combine(Config.Dir, "sounds");
-        Directory.CreateDirectory(soundsDir);
+        Directory.CreateDirectory(SoundsDir);
 
         LoadSlots();
         LoadCategories();
+        LoadSoundIds();
         BuildCategoryChips();
         LoadSounds();
     }
@@ -212,15 +244,50 @@ public partial class DashboardWindow : Window
     }
 
     // ==========================================
+    // MAPA DE IDS DEL BACKEND
+    // ==========================================
+    private void LoadSoundIds()
+    {
+        try
+        {
+            if (!File.Exists(SoundsMapPath)) return;
+            var saved = JsonSerializer.Deserialize<Dictionary<string, long>>(File.ReadAllText(SoundsMapPath));
+            if (saved != null)
+                _soundIds = new Dictionary<string, long>(saved, StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            // Un mapa corrupto no debe impedir que se muestre la lista.
+            System.Diagnostics.Trace.TraceError("sounds.json: " + ex.Message);
+        }
+    }
+
+    private void SaveSoundIds()
+    {
+        try
+        {
+            Directory.CreateDirectory(Config.Current.UserDir);
+            File.WriteAllText(SoundsMapPath, JsonSerializer.Serialize(_soundIds));
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("No se pudo guardar el registro de sonidos: " + ex.Message,
+                "Hamul", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    // ==========================================
     // CARGAR LISTA DE SONIDOS
     // ==========================================
     private void LoadSounds()
     {
+        Directory.CreateDirectory(SoundsDir);
+
         // Limpiar sectores cuyo archivo ya no existe
         for (int i = 0; i < Slots; i++)
             if (_slotFiles[i] != null && !File.Exists(_slotFiles[i])) _slotFiles[i] = null;
 
-        var files = Directory.GetFiles(soundsDir)
+        var files = Directory.GetFiles(SoundsDir)
             .Where(f => f.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".wav", StringComparison.OrdinalIgnoreCase))
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -234,7 +301,8 @@ public partial class DashboardWindow : Window
                 Category = _categoryMap.TryGetValue(Path.GetFileName(f), out var c) ? c : "",
                 Shortcut = slot >= 0 ? _shortcuts[slot] : "Libre",
                 FilePath = f,
-                Date = File.GetLastWriteTime(f).ToString("dd/MM/yyyy")
+                Date = File.GetLastWriteTime(f).ToString("dd/MM/yyyy"),
+                BackendId = _soundIds.TryGetValue(Path.GetFileName(f), out long backendId) ? backendId : 0
             };
         }).ToList();
 
@@ -664,12 +732,22 @@ public partial class DashboardWindow : Window
                 bool naturalEnd = _currentOutput == output; // false si lo detuvo StopCurrent
                 output.Dispose();
                 reader.Dispose();
-                if (naturalEnd)
+
+                if (!naturalEnd)
+                    return;
+
+                // PlaybackStopped puede llegar desde el hilo de audio: el cambio
+                // de icono y el refresco de la lista deben correr en el UI thread.
+                try
                 {
-                    _currentOutput = null;
-                    _currentPreviewReader = null;
-                    ResetPlaybackState();
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        _currentOutput = null;
+                        _currentPreviewReader = null;
+                        ResetPlaybackState();
+                    }));
                 }
+                catch { /* la ventana ya se está cerrando */ }
             };
 
             output.Play();
@@ -733,63 +811,250 @@ public partial class DashboardWindow : Window
         PlayFile(file, null, index);
     }
 
-    private void PlayPreview_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button btn && btn.Tag is SoundItem item)
-            PlayFile(item.FilePath);
-    }
-
     private void PlayButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button btn && btn.Tag is SoundItem item)
+        if (sender is not Button btn || btn.Tag is not SoundItem item)
+            return;
+
+        // Mismo sonido: el botón funciona como Play/Pausa.
+        if (_currentPlayingItem?.FilePath == item.FilePath)
         {
-            if (_currentPlayingItem?.FilePath == item.FilePath)
-            {
-                StopCurrent();
-                return;
-            }
-            PlayFile(item.FilePath, item);
+            StopCurrent();
+            return;
         }
+
+        // Otro sonido: PlayFile detiene el anterior y restaura su ▶.
+        PlayFile(item.FilePath, item);
     }
 
-    private void DeleteSound_Click(object sender, RoutedEventArgs e)
+    private async void DeleteSound_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button btn && btn.Tag is SoundItem itemToDelete)
-        {
-            var result = MessageBox.Show($"¿Seguro que quieres eliminar '{itemToDelete.Name}'?", "Confirmar",
-                MessageBoxButton.YesNo, MessageBoxImage.Warning);
-            if (result != MessageBoxResult.Yes) return;
+        if (sender is not Button btn || btn.Tag is not SoundItem itemToDelete)
+            return;
 
-            try
+        if (string.IsNullOrWhiteSpace(Config.Current.AuthToken))
+        {
+            MessageBox.Show(
+                "No hay una sesión iniciada. Vuelve a iniciar sesión para eliminar sonidos.",
+                "Hamul", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            $"¿Seguro que quieres eliminar '{itemToDelete.Name}'?",
+            "Confirmar", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (confirm != MessageBoxResult.Yes)
+            return;
+
+        btn.IsEnabled = false;
+
+        try
+        {
+            ApiClient.SetToken(Config.Current.AuthToken);
+
+            long backendId = itemToDelete.BackendId;
+
+            // Sonidos subidos antes de guardar el mapa: buscar su id por título.
+            if (backendId <= 0)
             {
-                StopCurrent();
+                var list = await ApiClient.GetAsync<List<SoundUploadResponse>>("api/sonidos/mios");
+                if (!list.IsSuccess || list.Data is null)
+                {
+                    MessageBox.Show(list.Error ?? "No se pudo consultar tus sonidos en el servidor.",
+                        "Hamul", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+
+                string title = Path.GetFileNameWithoutExtension(itemToDelete.FilePath);
+                var match = list.Data.FirstOrDefault(s =>
+                    string.Equals(s.Title, title, StringComparison.OrdinalIgnoreCase));
+
+                if (match is null)
+                {
+                    var localOnly = MessageBox.Show(
+                        "Este sonido no está registrado en el servidor.\n\n" +
+                        "¿Eliminarlo solo de la lista local?",
+                        "Hamul", MessageBoxButton.YesNo, MessageBoxImage.Question);
+
+                    if (localOnly != MessageBoxResult.Yes)
+                        return;
+                }
+                else
+                {
+                    backendId = match.Id;
+                    itemToDelete.BackendId = backendId;
+                    _soundIds[Path.GetFileName(itemToDelete.FilePath)] = backendId;
+                    SaveSoundIds();
+                }
+            }
+
+            if (backendId > 0)
+            {
+                var deleted = await ApiClient.DeleteAsync($"api/sonidos/{backendId}");
+
+                // 404: ya no existe en el servidor; igual limpiamos lo local.
+                if (!deleted.IsSuccess && deleted.StatusCode != System.Net.HttpStatusCode.NotFound)
+                {
+                    MessageBox.Show(deleted.Error ?? "No se pudo eliminar el sonido en el servidor.",
+                        "Hamul", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return;
+                }
+            }
+
+            StopCurrent();
+
+            if (File.Exists(itemToDelete.FilePath))
                 File.Delete(itemToDelete.FilePath);
 
-                for (int i = 0; i < Slots; i++)
-                    if (_slotFiles[i] == itemToDelete.FilePath) _slotFiles[i] = null;
-                SaveSlots();
+            for (int i = 0; i < Slots; i++)
+                if (_slotFiles[i] == itemToDelete.FilePath)
+                    _slotFiles[i] = null;
+            SaveSlots();
 
-                if (_categoryMap.Remove(Path.GetFileName(itemToDelete.FilePath))) SaveCategories();
+            string fileKey = Path.GetFileName(itemToDelete.FilePath);
+            if (_categoryMap.Remove(fileKey)) SaveCategories();
+            if (_soundIds.Remove(fileKey)) SaveSoundIds();
 
-                LoadSounds();
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show("Error al eliminar: " + ex.Message);
-            }
+            LoadSounds();
+
+            MessageBox.Show("Sonido eliminado.", "Hamul",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Error al eliminar el sonido: " + ex.Message,
+                "Hamul", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            btn.IsEnabled = true;
         }
     }
 
-    private void AddSound_Click(object sender, RoutedEventArgs e)
+    private async void AddSound_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new Microsoft.Win32.OpenFileDialog { Filter = "Archivos de Audio|*.mp3;*.wav", Multiselect = true };
-        if (dialog.ShowDialog() == true)
+        var dialog = new Microsoft.Win32.OpenFileDialog
+        {
+            Filter = "Archivos de Audio|*.mp3;*.wav",
+            Multiselect = true
+        };
+
+        if (dialog.ShowDialog() != true)
+            return;
+
+        if (string.IsNullOrWhiteSpace(Config.Current.AuthToken))
+        {
+            MessageBox.Show(
+                "No hay una sesión iniciada. Vuelve a iniciar sesión para subir sonidos.",
+                "Hamul", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        // Asegura que el HttpClient envíe el JWT actual en Authorization.
+        ApiClient.SetToken(Config.Current.AuthToken);
+
+        AddSoundBtn.IsEnabled = false;
+        AddSoundBtn.Content = "Subiendo...";
+        int uploaded = 0;
+        var errors = new List<string>();
+
+        try
         {
             foreach (var file in dialog.FileNames)
             {
-                try { File.Copy(file, Path.Combine(soundsDir, Path.GetFileName(file)), overwrite: true); } catch { }
+                string fileName = Path.GetFileName(file);
+
+                try
+                {
+                    var info = new FileInfo(file);
+                    if (!info.Exists)
+                    {
+                        errors.Add($"{fileName}: el archivo no existe.");
+                        continue;
+                    }
+
+                    string extension = Path.GetExtension(file).ToLowerInvariant();
+                    if (extension is not (".mp3" or ".wav"))
+                    {
+                        errors.Add($"{fileName}: solo se permiten archivos .mp3 y .wav.");
+                        continue;
+                    }
+
+                    if (info.Length > 20L * 1024 * 1024)
+                    {
+                        errors.Add($"{fileName}: supera el límite de 20 MB.");
+                        continue;
+                    }
+
+                    string title = Path.GetFileNameWithoutExtension(file).Trim();
+                    if (title.Length == 0) title = "Sonido";
+                    if (title.Length > 50) title = title[..50];
+
+                    using var form = new MultipartFormDataContent();
+                    using var stream = File.OpenRead(file);
+
+                    var audio = new StreamContent(stream);
+                    audio.Headers.ContentType = new MediaTypeHeaderValue(
+                        extension == ".mp3" ? "audio/mpeg" : "audio/wav");
+
+                    form.Add(audio, "archivo", fileName);
+                    form.Add(new StringContent(title), "nombre");
+                    form.Add(new StringContent("privado"), "visibilidad");
+
+                    // POST https://hamulapi.onrender.com/api/sonidos
+                    var result = await ApiClient.PostMultipartAsync<SoundUploadResponse>("api/sonidos", form);
+
+                    if (!result.IsSuccess)
+                    {
+                        errors.Add($"{fileName}: {result.Error ?? "no se pudo subir el sonido."}");
+                        continue;
+                    }
+
+                    // Guardar el id del backend para poder borrarlo luego.
+                    if (result.Data is { } uploadedSound)
+                    {
+                        _soundIds[fileName] = uploadedSound.Id;
+                        SaveSoundIds();
+                    }
+
+                    // El backend ya guardó el archivo; hacemos una copia local
+                    // para poder reproducirlo y asignarlo a la rueda.
+                    Directory.CreateDirectory(SoundsDir);
+                    string destination = Path.Combine(SoundsDir, fileName);
+                    if (!string.Equals(Path.GetFullPath(file), Path.GetFullPath(destination),
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        File.Copy(file, destination, overwrite: true);
+                    }
+
+                    uploaded++;
+                }
+                catch (Exception ex)
+                {
+                    // Mostrar el error real en pantalla, sin ocultarlo.
+                    errors.Add($"{fileName}: {ex.Message}");
+                }
             }
-            LoadSounds();
+        }
+        finally
+        {
+            AddSoundBtn.IsEnabled = true;
+            AddSoundBtn.Content = "+ Añadir Sonido";
+        }
+
+        LoadSounds();
+
+        if (errors.Count > 0)
+        {
+            MessageBox.Show(
+                "No se pudieron subir todos los sonidos:\n\n" + string.Join("\n\n", errors),
+                "Hamul", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        else if (uploaded > 0)
+        {
+            MessageBox.Show(
+                $"{uploaded} sonido(s) subido(s) correctamente.",
+                "Hamul", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
 
@@ -801,10 +1066,12 @@ public partial class DashboardWindow : Window
         SoundWheelView.Visibility = Visibility.Visible;
         MySoundsView.Visibility = Visibility.Collapsed;
         SettingsPage.Visibility = Visibility.Collapsed;
+        AccountPage.Visibility = Visibility.Collapsed;
 
         BtnSoundWheel.Tag = "active";
         BtnMySounds.Tag = null;
         BtnSettings.Tag = null;
+        BtnAccount.Tag = null;
     }
 
     private void ShowMySounds_Click(object sender, RoutedEventArgs e)
@@ -812,10 +1079,12 @@ public partial class DashboardWindow : Window
         SoundWheelView.Visibility = Visibility.Collapsed;
         MySoundsView.Visibility = Visibility.Visible;
         SettingsPage.Visibility = Visibility.Collapsed;
+        AccountPage.Visibility = Visibility.Collapsed;
 
         BtnMySounds.Tag = "active";
         BtnSoundWheel.Tag = null;
         BtnSettings.Tag = null;
+        BtnAccount.Tag = null;
     }
 
     private void ShowSettings_Click(object sender, RoutedEventArgs e)
@@ -823,10 +1092,55 @@ public partial class DashboardWindow : Window
         SoundWheelView.Visibility = Visibility.Collapsed;
         MySoundsView.Visibility = Visibility.Collapsed;
         SettingsPage.Visibility = Visibility.Visible;
+        AccountPage.Visibility = Visibility.Collapsed;
 
         BtnSettings.Tag = "active";
         BtnSoundWheel.Tag = null;
         BtnMySounds.Tag = null;
+        BtnAccount.Tag = null;
+    }
 
+    private void ShowAccount_Click(object sender, RoutedEventArgs e)
+    {
+        // Sin sesión iniciada: el login es la única vía para entrar.
+        if (string.IsNullOrWhiteSpace(Config.Current.AuthToken))
+        {
+            LoginRequested?.Invoke(this, EventArgs.Empty);
+            return;
+        }
+
+        // Con sesión iniciada: vista de cuenta dentro del panel (sin modal).
+        SoundWheelView.Visibility = Visibility.Collapsed;
+        MySoundsView.Visibility = Visibility.Collapsed;
+        SettingsPage.Visibility = Visibility.Collapsed;
+        AccountPage.Visibility = Visibility.Visible;
+
+        AccountPage.Refresh();
+
+        BtnAccount.Tag = "active";
+        BtnSoundWheel.Tag = null;
+        BtnMySounds.Tag = null;
+        BtnSettings.Tag = null;
+    }
+
+    private void Logout()
+    {
+        Config.Current.AuthToken = null;
+        Config.Current.Nickname = null;
+        Config.Current.Email = null;
+        Config.Current.UserId = 0;
+
+        try { Config.Current.Save(); }
+        catch { /* la sesión en memoria ya se cerró */ }
+
+        ApiClient.SetToken(null);
+        Config.NotifySessionChanged();
+
+        // Abrir el login en el hilo WPF principal antes de cerrar este panel.
+        LoginRequested?.Invoke(this, EventArgs.Empty);
+
+        // Cerrar el Dashboard: su hilo de ShowDialog termina y, cuando el
+        // usuario entre con otra cuenta, Program abrirá un panel nuevo.
+        this.Close();
     }
 }

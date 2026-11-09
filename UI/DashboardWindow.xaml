@@ -52,7 +52,7 @@
                                 Content="❤️  My Sounds" Click="ShowMySounds_Click"/>
                         <Button Style="{StaticResource NavButton}" Content="🔍  Browse"/>
                         <Button x:Name="BtnSettings" Style="{StaticResource NavButton}" Content="⚙️  Settings" Click="ShowSettings_Click"/>
-                        <Button Style="{StaticResource NavButton}" Content="👤  Account"/>
+                        <Button x:Name="BtnAccount" Style="{StaticResource NavButton}" Content="👤  Account" Click="ShowAccount_Click"/>
                     </StackPanel>
 
                     <TextBlock Grid.Row="2" Text="v0.1" Margin="30,0,0,22" FontSize="11"
@@ -133,14 +133,18 @@
                                                         <ColumnDefinition Width="*"/>
                                                         <ColumnDefinition Width="32"/>
                                                     </Grid.ColumnDefinitions>
-                                                    <Button Grid.Column="0" Style="{StaticResource IconButton}" Height="30" Content="▶"
-                                                            Foreground="{DynamicResource AccentOrange}" Click="PlayPreview_Click" Tag="{Binding}"/>
+                                                    <Button Grid.Column="0" Style="{StaticResource IconButton}" Height="30"
+                                                            Content="{Binding PlayIcon}" FontSize="13"
+                                                            Foreground="{DynamicResource AccentOrange}"
+                                                            ToolTip="Reproducir / detener"
+                                                            Click="PlayButton_Click" Tag="{Binding}"/>
                                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="8,0">
                                                         <TextBlock Text="{Binding Name}" Foreground="{DynamicResource TextWhite}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
                                                         <TextBlock Text="{Binding Shortcut}" FontSize="10" Foreground="{DynamicResource TextGray}"/>
                                                     </StackPanel>
-                                                    <Button Grid.Column="2" Style="{StaticResource IconButton}" Height="30" Content="✕"
-                                                            Foreground="{DynamicResource AccentRed}" ToolTip="Eliminar de la lista"
+                                                    <Button Grid.Column="2" Style="{StaticResource IconButton}" Height="30"
+                                                            FontFamily="Segoe MDL2 Assets" Content="&#xE74D;"
+                                                            Foreground="{DynamicResource AccentRed}" ToolTip="Eliminar sonido"
                                                             Click="DeleteSound_Click" Tag="{Binding}"/>
                                                 </Grid>
                                             </DataTemplate>
@@ -203,7 +207,7 @@
                                 </Grid>
                             </Border>
 
-                            <Button Grid.Column="2" Style="{StaticResource PrimaryButton}" Content="+ Añadir Sonido" Click="AddSound_Click"/>
+                            <Button x:Name="AddSoundBtn" Grid.Column="2" Style="{StaticResource PrimaryButton}" Content="+ Añadir Sonido" Click="AddSound_Click"/>
                         </Grid>
 
                         <!-- Categorías -->
@@ -228,6 +232,7 @@
                                         <ColumnDefinition Width="1.3*"/>
                                         <ColumnDefinition Width="1.6*"/>
                                         <ColumnDefinition Width="1.1*"/>
+                                        <ColumnDefinition Width="42"/>
                                     </Grid.ColumnDefinitions>
                                     <TextBlock Grid.Column="1" Text="NOMBRE" Foreground="{DynamicResource TextGray}" FontSize="11" FontWeight="Bold"/>
                                     <TextBlock Grid.Column="2" Text="CATEGORÍA" Foreground="{DynamicResource TextGray}" FontSize="11" FontWeight="Bold"/>
@@ -250,6 +255,7 @@
                                                     <ColumnDefinition Width="1.3*"/>
                                                     <ColumnDefinition Width="1.6*"/>
                                                     <ColumnDefinition Width="1.1*"/>
+                                                    <ColumnDefinition Width="42"/>
                                                 </Grid.ColumnDefinitions>
                                                 <Button Grid.Column="0" Style="{StaticResource IconButton}" Height="28" Width="30" HorizontalAlignment="Left"
                                                         Content="{Binding PlayIcon}" FontSize="13" Foreground="{DynamicResource AccentOrange}"
@@ -259,6 +265,10 @@
                                                 <TextBlock Grid.Column="2" Text="{Binding CategoryLabel}" Foreground="{DynamicResource TextGray}" VerticalAlignment="Center"/>
                                                 <TextBlock Grid.Column="3" Text="{Binding Shortcut}" Foreground="{DynamicResource AccentOrange}" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                                 <TextBlock Grid.Column="4" Text="{Binding Date}" Foreground="{DynamicResource TextGray}" VerticalAlignment="Center"/>
+                                                <Button Grid.Column="5" Style="{StaticResource IconButton}" Height="28" Width="30"
+                                                        FontFamily="Segoe MDL2 Assets" Content="&#xE74D;"
+                                                        Foreground="{DynamicResource AccentRed}" ToolTip="Eliminar sonido"
+                                                        Click="DeleteSound_Click" Tag="{Binding}"/>
                                             </Grid>
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
@@ -272,6 +282,8 @@
                     </Grid>
 
                     <pages:SettingsPage x:Name="SettingsPage" Visibility="Collapsed"/>
+
+                    <pages:AccountPage x:Name="AccountPage" Visibility="Collapsed"/>
 
                 </Grid>
             </Grid>

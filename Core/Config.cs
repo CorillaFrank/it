@@ -22,6 +22,7 @@ public class Config
     private string _pttKey = "G";
     private string? _authToken;
     private string? _nickname;
+    private string? _email;
     private long _userId;
     private string? _lastEmail;
     private string _theme = "Dark";
@@ -37,6 +38,15 @@ public class Config
         }
     }
 
+    /// <summary>
+    /// Se dispara cuando cambia la sesión (login correcto, cierre de sesión o 401).
+    /// La vista de Account lo usa para refrescar sus datos.
+    /// </summary>
+    public static event EventHandler? SessionChanged;
+
+    public static void NotifySessionChanged() =>
+        SessionChanged?.Invoke(null, EventArgs.Empty);
+
     // --- Dispositivos de Audio ---
     public string? MicId { get { lock (Sync) return _micId; } set { lock (Sync) _micId = value; } }
     public string? MonitorId { get { lock (Sync) return _monitorId; } set { lock (Sync) _monitorId = value; } }
@@ -51,6 +61,7 @@ public class Config
     // --- Sesión de Usuario (NUEVO) ---
     public string? AuthToken { get { lock (Sync) return _authToken; } set { lock (Sync) _authToken = value; } }
     public string? Nickname { get { lock (Sync) return _nickname; } set { lock (Sync) _nickname = value; } }
+    public string? Email { get { lock (Sync) return _email; } set { lock (Sync) _email = value; } }
     public long UserId { get { lock (Sync) return _userId; } set { lock (Sync) _userId = value; } }
     public string? LastEmail { get { lock (Sync) return _lastEmail; } set { lock (Sync) _lastEmail = value; } }
 
@@ -66,6 +77,15 @@ public class Config
     // --- Rutas ---
     public static string Dir => System.IO.Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HamulProto");
+
+    /// <summary>
+    /// Carpeta de datos del usuario actual. Cada cuenta tiene la suya para que
+    /// una cuenta nueva no herede sonidos, sectores ni categorías de otra.
+    /// </summary>
+    public string UserDir => System.IO.Path.Combine(
+        Dir, UserId > 0 ? UserId.ToString() : "guest");
+
+    public string UserSoundsDir => System.IO.Path.Combine(UserDir, "sounds");
 
     static string FilePath => System.IO.Path.Combine(Dir, "config.json");
 

@@ -6,7 +6,6 @@ using System.Text.Json;
 using System.Threading;
 using System.Windows.Threading;
 using HamulProto;
-using HamulProto.Models;
 using NAudio.CoreAudioApi;
 
 // ---------------------------------------------------------------
@@ -28,68 +27,51 @@ if (!owned)
 }
 
 
-bool manualLoginSucceeded = false;
-bool hasSavedToken = !string.IsNullOrEmpty(Config.Current.AuthToken);
-bool startupWithSavedToken = args.Contains("--startup", StringComparer.OrdinalIgnoreCase) && hasSavedToken;
-ApiClient.SetToken(Config.Current.AuthToken);
+// ---------------------------------------------------------------------------
+// Login obligatorio al iniciar.
+// Se muestra ANTES de crear la bandeja, el audio o la rueda: si el usuario
+// cierra la ventana sin autenticarse, el proceso termina por completo.
+// ---------------------------------------------------------------------------
+bool loginSucceeded = false;
+Exception? loginError = null;
 
-if (hasSavedToken)
+var loginThread = new Thread(() =>
 {
-    var meResult = ApiClient.GetAsync<MeResponse>("/api/auth/me").GetAwaiter().GetResult();
-    if (meResult.IsSuccess && meResult.Data is { } me)
+    try
     {
-        Config.Current.UserId = me.UserId;
-        Config.Current.Nickname = me.Nickname;
-        Config.Current.Save();
+        var login = new HamulProto.LoginWindow
+        {
+            WindowStartupLocation = System.Windows.WindowStartupLocation.CenterScreen,
+            Topmost = false,
+            ShowInTaskbar = true
+        };
+
+        login.ShowDialog();
+        loginSucceeded = login.LoginCompleted;
     }
-    else
+    catch (Exception ex)
     {
-        hasSavedToken = false;
+        loginError = ex;
     }
+});
+loginThread.SetApartmentState(ApartmentState.STA);
+loginThread.IsBackground = true;
+loginThread.Start();
+loginThread.Join();
+
+if (loginError != null)
+{
+    System.Windows.MessageBox.Show("Error al abrir el login:\n" + loginError.Message, "Hamul");
+    return;
 }
 
-if (!hasSavedToken)
+if (!loginSucceeded)
 {
-    bool? loginResult = null;
-    Exception? loginError = null;
-
-    // El hilo principal de una app de consola es MTA: ShowDialog() exige STA.
-    // Ejecutamos el login en un hilo STA dedicado y esperamos a que se cierre.
-    var loginThread = new Thread(() =>
-    {
-        try
-        {
-            var login = new HamulProto.LoginWindow
-            {
-                WindowStartupLocation = System.Windows.WindowStartupLocation.CenterScreen,
-                Topmost = true,
-                ShowInTaskbar = true
-            };
-            loginResult = login.ShowDialog();
-        }
-        catch (Exception ex)
-        {
-            loginError = ex;
-        }
-    });
-    loginThread.SetApartmentState(ApartmentState.STA);
-    loginThread.IsBackground = true;
-    loginThread.Start();
-    loginThread.Join(); // Bloquea el hilo principal hasta que se cierre el login
-
-    if (loginError != null)
-    {
-        System.Windows.MessageBox.Show("Error al abrir el login:\n" + loginError.Message, "Hamul");
-        return;
-    }
-
-    if (loginResult != true)
-    {
-        return; // El usuario cerró el login sin autenticarse
-    }
-
-    manualLoginSucceeded = true;
+    // Cerró el login (X, Escape o Alt+F4) sin autenticarse:
+    // no dejar la app en segundo plano en la bandeja.
+    return;
 }
+
 // --- Registro de errores ---
 string logPath = Path.Combine(Config.Dir, "hamul.log");
 void Log(string text)
@@ -178,27 +160,15 @@ Config.Current.MicId = mic.ID;
 Config.Current.MonitorId = monitor.ID;
 Config.Current.Save();
 
-// --- Sonidos
-var soundsDir = Path.Combine(Config.Dir, "sounds");
+// --- Sonidos por usuario ---
+// Cada cuenta tiene su propia carpeta. Una cuenta nueva empieza vacía:
+// no se copian sonidos de ejemplo ni de otras cuentas.
+var soundsDir = Config.Current.UserSoundsDir;
 Directory.CreateDirectory(soundsDir);
-
-var migratedFlag = Path.Combine(Config.Dir, ".sounds-migrated");
-if (!File.Exists(migratedFlag))
-{
-    var oldDir = Path.Combine(AppContext.BaseDirectory, "sounds");
-    if (Directory.Exists(oldDir))
-    {
-        foreach (var f in Directory.GetFiles(oldDir))
-        {
-            try { File.Copy(f, Path.Combine(soundsDir, Path.GetFileName(f))); } catch { }
-        }
-    }
-    try { File.WriteAllText(migratedFlag, "1"); } catch { }
-}
 
 // --- Sectores de la rueda (8 fijos). Se guardan en slots.json desde el panel de control.
 const int SlotCount = 8;
-string slotsPath = Path.Combine(Config.Dir, "slots.json");
+string slotsPath = Path.Combine(Config.Current.UserDir, "slots.json");
 var slotFiles = new string?[SlotCount];
 var soundCache = new Dictionary<string, CachedSound>(StringComparer.OrdinalIgnoreCase);
 var sounds = new List<CachedSound>();
@@ -233,20 +203,8 @@ bool LoadSlotFiles()
     }
     else
     {
-        // Primera vez: usar los primeros 8 sonidos por orden alfabético y guardarlos
-        var first = Directory.GetFiles(soundsDir)
-            .Where(f => f.EndsWith(".mp3", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".wav", StringComparison.OrdinalIgnoreCase))
-            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
-            .Take(SlotCount)
-            .ToList();
-        for (int i = 0; i < first.Count; i++) next[i] = first[i];
-
-        try
-        {
-            File.WriteAllText(slotsPath, JsonSerializer.Serialize(next));
-            slotsStamp = File.GetLastWriteTimeUtc(slotsPath);
-        }
-        catch { }
+        // Sin slots.json: la rueda empieza vacía. El usuario asigna sus propios
+        // sonidos desde el panel; no se autoasigna ni se cargan ejemplos.
     }
 
     for (int i = 0; i < SlotCount; i++) slotFiles[i] = next[i];
@@ -496,6 +454,10 @@ void RestartApp()
     Environment.Exit(0);
 }
 
+// Se asigna cuando arranca el hilo de interfaz WPF. El menú de la bandeja
+// y el panel lo usan para abrir el login sin bloquear la aplicación.
+Action? showLogin = null;
+
 int settingsOpen = 0;
 void OpenSettings()
 {
@@ -506,6 +468,7 @@ void OpenSettings()
         try
         {
             var win = new DashboardWindow();
+            win.LoginRequested += (_, _) => showLogin?.Invoke();
             win.ShowDialog();
         }
         catch (Exception ex)
@@ -545,37 +508,59 @@ var uiThread = new Thread(() =>
     var app = new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
     app.DispatcherUnhandledException += (_, e) => { Log("WPF: " + e.Exception); e.Handled = true; };
 
-    int loginPromptOpen = 0;
-    ApiClient.AuthenticationRequired += (_, _) =>
+    LoginWindow? loginWindow = null;
+
+    // Abre el login SIN bloquear (Show, no ShowDialog). Si ya está abierto,
+    // simplemente lo trae al frente. Se usa para reautenticar (401 o Account).
+    void OpenLogin()
     {
-        if (Interlocked.Exchange(ref loginPromptOpen, 1) != 0 ||
-            app.Dispatcher.HasShutdownStarted || app.Dispatcher.HasShutdownFinished)
+        // La ventana de login solo debe abrirse si NO hay sesión iniciada.
+        if (!string.IsNullOrWhiteSpace(Config.Current.AuthToken))
             return;
 
-        app.Dispatcher.BeginInvoke(new Action(() =>
+        if (loginWindow != null)
         {
-            try
-            {
-                var login = new LoginWindow
-                {
-                    WindowStartupLocation = System.Windows.WindowStartupLocation.CenterScreen,
-                    Topmost = true,
-                    ShowInTaskbar = true
-                };
-                if (login.ShowDialog() != true)
-                {
-                    System.Windows.MessageBox.Show(
-                        "La sesión requiere iniciar sesión nuevamente. Hamul seguirá abierto.",
-                        "Hamul",
-                        System.Windows.MessageBoxButton.OK,
-                        System.Windows.MessageBoxImage.Information);
-                }
-            }
-            finally
-            {
-                Interlocked.Exchange(ref loginPromptOpen, 0);
-            }
-        }));
+            loginWindow.WindowState = System.Windows.WindowState.Normal;
+            loginWindow.Activate();
+            return;
+        }
+
+        var login = new LoginWindow
+        {
+            WindowStartupLocation = System.Windows.WindowStartupLocation.CenterScreen,
+            Topmost = false,
+            ShowInTaskbar = true
+        };
+
+        login.Closed += (_, _) => loginWindow = null;
+        login.LoginSucceeded += (_, _) =>
+        {
+            loginWindow = null;
+            OpenSettings();
+        };
+
+        loginWindow = login;
+        login.Show();      // No bloquea: la app sigue funcionando en modo invitado
+        login.Activate();
+    }
+
+    // El menú de la bandeja y el panel viven en otros hilos; marshal al hilo WPF.
+    showLogin = () =>
+    {
+        if (app.Dispatcher.CheckAccess())
+            OpenLogin();
+        else
+            app.Dispatcher.BeginInvoke(new Action(OpenLogin));
+    };
+
+    // 401: la sesión expiró. ApiClient ya limpió el token; pedimos login
+    // de forma no bloqueante (sin MessageBox y sin ShowDialog).
+    ApiClient.AuthenticationRequired += (_, _) =>
+    {
+        if (app.Dispatcher.HasShutdownStarted || app.Dispatcher.HasShutdownFinished)
+            return;
+
+        app.Dispatcher.BeginInvoke(new Action(OpenLogin));
     };
 
     var wheel = new WheelWindow(names);
@@ -662,8 +647,8 @@ uiThread.Start();
 
 wpfReady.Wait();
 
-if (manualLoginSucceeded && !startupWithSavedToken)
-    OpenSettings();
+// El login inicial ya se completó correctamente: abrir la ventana principal.
+OpenSettings();
 
 System.Windows.Forms.Application.Run();
 
