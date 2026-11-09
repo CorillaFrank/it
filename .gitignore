@@ -1,0 +1,9 @@
+# Carpetas de compilación
+[Bb]in/
+[Oo]bj/
+.vs/
+
+# Archivos generados y temporales
+*.pdb
+*.user
+*.suo

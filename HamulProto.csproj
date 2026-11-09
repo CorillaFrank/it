@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <ApplicationIcon>Assets\hamul.ico</ApplicationIcon>
+   <AssemblyName>Hamul</AssemblyName>
+   <Product>Hamul</Product>
+   <Version>1.0.0</Version>
+   <UseWPF>true</UseWPF>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms> 
+    <RootNamespace>HamulProto</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="sounds\**" CopyToOutputDirectory="PreserveNewest" />
+  
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,42 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    
+    <!-- Colores del Tema Claro (Light) -->
+    <SolidColorBrush x:Key="SidebarBg" Color="#F0F0F5"/>
+    <SolidColorBrush x:Key="MainBg" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="CardBg" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="BorderSubtle" Color="#DADCE0"/>
+    <SolidColorBrush x:Key="TextWhite" Color="#000000"/>
+    <SolidColorBrush x:Key="TextGray" Color="#555555"/>
+    <SolidColorBrush x:Key="AccentColor" Color="#FF5722"/>
+    <SolidColorBrush x:Key="AccentOrange" Color="#E64A19"/>
+    <SolidColorBrush x:Key="AccentRed" Color="#D32F2F"/>
+    <SolidColorBrush x:Key="BgBrush" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="DividerBrush" Color="#22000000"/>
+    <SolidColorBrush x:Key="SubTextBrush" Color="#5F6368"/>
+    <SolidColorBrush x:Key="HoverBrush" Color="#0D000000"/>
+    <SolidColorBrush x:Key="SelectedBrush" Color="#22FF5722"/>
+    <SolidColorBrush x:Key="ControlBgBrush" Color="#F5F5F7"/>
+    <SolidColorBrush x:Key="ControlBorderBrush" Color="#C7C7CC"/>
+    <SolidColorBrush x:Key="ThumbBrush" Color="#66000000"/>
+    <SolidColorBrush x:Key="ThumbHoverBrush" Color="#99E64A19"/>
+    <SolidColorBrush x:Key="MenuBgBrush" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="CloseHoverBrush" Color="#D32F2F"/>
+    <SolidColorBrush x:Key="TransparentBrush" Color="#00FFFFFF"/>
+    <SolidColorBrush x:Key="SidebarOverlayBrush" Color="#CCF0F0F5"/>
+    <SolidColorBrush x:Key="OnAccentBrush" Color="#FFFFFF"/>
+    <Color x:Key="AccentColorValue">#FFFF5722</Color>
+
+    <LinearGradientBrush x:Key="WindowGradient" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#FFFFFF" Offset="0"/>
+        <GradientStop Color="#F0F0F5" Offset="1"/>
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="AccentGradient" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#FF5722" Offset="0"/>
+        <GradientStop Color="#E64A19" Offset="1"/>
+    </LinearGradientBrush>
+    <RadialGradientBrush x:Key="WheelBg" Center="0.5,0.5" GradientOrigin="0.5,0.5" RadiusX="0.75" RadiusY="0.75">
+        <GradientStop Color="#FFFFFF" Offset="0"/>
+        <GradientStop Color="#F0F0F5" Offset="1"/>
+    </RadialGradientBrush>
+</ResourceDictionary>
